@@ -1,47 +1,42 @@
-import cv2
 import numpy as np
-import tensorflow as tf
-from tensorflow.keras.applications import EfficientNetB0
-from tensorflow.keras.layers import Dense, GlobalAveragePooling2D
-from tensorflow.keras.models import Model
+import keras
+import keras.backend as k
+from keras.layers import Conv2D, MaxPooling2D, SpatialDropout2D, Flatten, Dropout, Dense
+from keras.models import Sequential, load_model
+from keras.optimizers import Adam
+from keras.preprocessing import image
+import cv2
+import datetime
+from efficientnet.keras import EfficientNetB0  # Import the specific EfficientNet class
 
-# Load EfficientNetB0 with pre-trained weights
-base_model = EfficientNetB0(weights='imagenet', include_top=False)
-x = base_model.output
-x = GlobalAveragePooling2D()(x)
-x = Dense(512, activation='relu')(x)
-predictions = Dense(2, activation='softmax')(x)
-model = Model(inputs=base_model.input, outputs=predictions)
+# Load the model with custom_objects parameter
+mymodel = load_model('mask_detection_model.h5', custom_objects={'EfficientNetB0': EfficientNetB0})
 
-# Load saved weights of the trained mask detection model
-model.load_weights('research/mask_detection_model.h5')
-
-# Open a webcam feed
 cap = cv2.VideoCapture(0)
+face_cascade = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
 
-while True:
-    ret, frame = cap.read()
+while cap.isOpened():
+    _, img = cap.read()
+    face = face_cascade.detectMultiScale(img, scaleFactor=1.1, minNeighbors=4)
+    for (x, y, w, h) in face:
+        face_img = img[y:y + h, x:x + w]
+        cv2.imwrite('temp.jpg', face_img)
+        test_image = image.load_img('temp.jpg', target_size=(150, 150, 3))
+        test_image = image.img_to_array(test_image)
+        test_image = np.expand_dims(test_image, axis=0)
+        pred = mymodel.predict(test_image)[0][0]
+        if pred == 1:
+            cv2.rectangle(img, (x, y), (x + w, y + h), (0, 0, 255), 3)
+            cv2.putText(img, 'NO MASK', ((x + w) // 2, y + h + 20), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
+        else:
+            cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 3)
+            cv2.putText(img, 'MASK', ((x + w) // 2, y + h + 20), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
+        datet = str(datetime.datetime.now())
+        cv2.putText(img, datet, (400, 450), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
-    if not ret:
-        break
+    cv2.imshow('img', img)
 
-    # Preprocess the frame for inference
-    resized_frame = cv2.resize(frame, (224, 224))
-    input_data = np.expand_dims(resized_frame, axis=0)
-    input_data = tf.keras.applications.efficientnet.preprocess_input(input_data)
-
-    # Perform inference
-    predictions = model.predict(input_data)
-    class_id = np.argmax(predictions)
-    confidence = predictions[0, class_id]
-
-    label = 'With Mask' if class_id == 0 else 'Without Mask'
-    color = (0, 255, 0) if class_id == 0 else (0, 0, 255)
-
-    cv2.putText(frame, f'{label} ({confidence:.2f})', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
-    cv2.imshow('Mask Detection', frame)
-
-    if cv2.waitKey(1) & 0xFF == ord('q'):
+    if cv2.waitKey(1) == ord('q'):
         break
 
 cap.release()

@@ -3,8 +3,8 @@
 
 ## Build Convolutional Neural Network(CNN) Model
 * Build neural networks for multiple models(experimental) and also used transfer learning for the last model.
-* Did Data Augmentation
-* Finall model saved was created using Transfer Learning (EfficientNet) model.
+* Did Data Augmentation To lower the validation loss and increase the accuracy.
+* Final model saved was created using Transfer Learning (EfficientNet) model.
 
 
 # Under Development

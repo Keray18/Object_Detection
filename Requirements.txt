@@ -1,5 +1,4 @@
+Flask
 opencv-python
-
 tensorflow
-
-h5py
+tensorflow-hub

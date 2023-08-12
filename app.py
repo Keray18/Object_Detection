@@ -1,43 +1,64 @@
-import numpy as np
-import keras
-import keras.backend as k
-from keras.layers import Conv2D, MaxPooling2D, SpatialDropout2D, Flatten, Dropout, Dense
-from keras.models import Sequential, load_model
-from keras.optimizers import Adam
-from keras.preprocessing import image
+from flask import Flask, render_template, Response
 import cv2
-import datetime
-from efficientnet.keras import EfficientNetB0  # Import the specific EfficientNet class
+import tensorflow as tf
+from tensorflow.keras.models import load_model
+import tensorflow_hub as hub
 
-# Load the model with custom_objects parameter
-mymodel = load_model('mask_detection_model.h5', custom_objects={'EfficientNetB0': EfficientNetB0})
+app = Flask(__name__)
+camera = cv2.VideoCapture(0) 
+mask_detection_model = load_model('mask_detect_model.h5', custom_objects={'KerasLayer': hub.KerasLayer})
 
-cap = cv2.VideoCapture(0)
-face_cascade = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
-
-while cap.isOpened():
-    _, img = cap.read()
-    face = face_cascade.detectMultiScale(img, scaleFactor=1.1, minNeighbors=4)
-    for (x, y, w, h) in face:
-        face_img = img[y:y + h, x:x + w]
-        cv2.imwrite('temp.jpg', face_img)
-        test_image = image.load_img('temp.jpg', target_size=(150, 150, 3))
-        test_image = image.img_to_array(test_image)
-        test_image = np.expand_dims(test_image, axis=0)
-        pred = mymodel.predict(test_image)[0][0]
-        if pred == 1:
-            cv2.rectangle(img, (x, y), (x + w, y + h), (0, 0, 255), 3)
-            cv2.putText(img, 'NO MASK', ((x + w) // 2, y + h + 20), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
+def generate_frames():
+    while True:
+        success, frame = camera.read()
+        
+        if not success:
+            break
         else:
-            cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 3)
-            cv2.putText(img, 'MASK', ((x + w) // 2, y + h + 20), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
-        datet = str(datetime.datetime.now())
-        cv2.putText(img, datet, (400, 450), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            # For Face Detection
+            frontal_face = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
+            faces = frontal_face.detectMultiScale(frame, 1.1, 7)
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-    cv2.imshow('img', img)
+            for (x, y, w ,h) in faces:
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
+                roi_gray = gray[y:y + h, x:x + w]
+                roi_color = frame[y:y + h, x:x + w]
 
-    if cv2.waitKey(1) == ord('q'):
-        break
+            # Mask Detection
+            for (x, y, w, h) in faces:
+                face_roi = gray[y:y + h, x:x + w]
+                face_roi_resized = cv2.resize(face_roi, (224, 224))
+                face_roi_normalized = face_roi_resized / 255.0
+                face_roi_input = tf.expand_dims(face_roi_normalized, axis=0)
 
-cap.release()
-cv2.destroyAllWindows()
+                # Convert grayscale image to color (3 channels)
+                face_roi_color = cv2.cvtColor(face_roi_resized, cv2.COLOR_GRAY2BGR)
+    
+                # Ensure the input shape matches (None, 224, 224, 3)
+                face_roi_input = tf.expand_dims(face_roi_color, axis=0)
+
+                prediction = mask_detection_model.predict(face_roi_input)
+                mask_probability = prediction[0][0]  # Probability of wearing a mask
+
+                label = "Mask" if mask_probability > 0.5 else "No Mask"
+                color = (0, 255, 0) if label == "Mask" else (0, 0, 255)
+                cv2.putText(frame, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+            ret, buffer = cv2.imencode('.jpg', frame)
+            frame = buffer.tobytes()
+
+        
+        yield(b'--frame\r\n'
+                    b'content-type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+
+@app.route('/')
+def Home():
+    return render_template('index.html')
+
+@app.route('/video')
+def video():
+    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+if __name__ == '__main__':
+    app.run(debug=True)
